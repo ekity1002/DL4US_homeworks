@@ -1,6 +1,35 @@
 #!/usr/bin/env python
 # coding: utf-8
 
+# # Lesson2 畳み込みニューラルネットワーク (CNN)
+
+# ## Homework
+
+# 今Lessonで学んだことに工夫を加えて, CNNでより高精度なCIFAR10の分類器を実装してみましょう.
+# 精度上位者はリーダーボードに載ります.
+
+# ### 目標値
+
+# Accuracy 90%
+
+# ### ルール
+
+# - ネットワークの形などは特に制限を設けません.
+# - アンサンブル学習などを組み込んでもOKです.
+# - **下のセルで指定されている`x_train`, `y_train`以外の学習データは使わないでください.**
+
+# ### 評価について
+
+# - テストデータ(`x_test`)に対する予測ラベルをcsvファイルで提出してください.
+# - ファイル名は`submission.csv`としてください.
+# - 予測ラベルの`y_test`に対する精度 (Accuracy) で評価します.
+# - 毎日24時にテストデータの一部に対する精度でLeader Boardを更新します.
+# - 最終的な評価はテストデータ全体に対する精度でおこないます.
+
+# ### サンプルコード
+
+# **次のセルで指定されている`x_train`, `y_train`のみを使って学習させてください.**
+
 # In[1]:
 
 
@@ -51,11 +80,18 @@ def load_cifar10():
 x_train, x_test, y_train = load_cifar10()
 
 
-# In[13]:
+# In[3]:
+
+
+print(x_train.shape, y_train.shape, x_test.shape)
+print(y_train.sum(axis=0))
+
+
+# In[4]:
 
 
 # 水増し用ジェネレータ定義
-def my_generator(x, y, batch_size):
+def train_generator(x, y, batch_size):
     gen_params = {
         'rotation_range':20,
         'horizontal_flip':True,
@@ -65,6 +101,11 @@ def my_generator(x, y, batch_size):
         'channel_shift_range':0.2
     }
     img_gen = ImageDataGenerator(**gen_params)
+    for x_batch, y_batch in img_gen.flow(x,y,batch_size=batch_size):
+        yield x_batch, y_batch
+
+def val_generator(x, y, batch_size):
+    img_gen = ImageDataGenerator() # 検証用には処理を加えない!!
     for x_batch, y_batch in img_gen.flow(x,y,batch_size=batch_size):
         yield x_batch, y_batch
         
@@ -89,7 +130,59 @@ def tta_generator(x_test, batch_size):
     return ImageDataGenerator(rotation_range = 20 , horizontal_flip = True,height_shift_range = 0.2,                                 width_shift_range = 0.2,zoom_range = 0.2,channel_shift_range = 0.2                                  ).flow(x_test, batch_size = batch_size,shuffle = False)
 
 
-# In[4]:
+# In[5]:
+
+
+def build_model():
+    # 使うモデルに置き換える。
+    drop_rate=0.3
+    inp = Input(shape = (32,32,3))
+
+    x = Conv2D(64,(3,3),padding = "SAME",activation= "relu", kernel_initializer='he_normal')(inp)
+    x = Conv2D(64,(3,3),padding = "SAME",activation= "relu", kernel_initializer='he_normal')(x)
+    x = Conv2D(64,(3,3),padding = "SAME",activation= "relu", kernel_initializer='he_normal')(x)
+    x = BatchNormalization()(x)
+    x = MaxPooling2D()(x)
+    x = Dropout(drop_rate)(x)
+
+    x = Conv2D(128,(3,3),padding = "SAME",activation= "relu", kernel_initializer='he_normal')(x)
+    x = Conv2D(128,(3,3),padding = "SAME",activation= "relu", kernel_initializer='he_normal')(x)
+    x = Conv2D(128,(3,3),padding = "SAME",activation= "relu", kernel_initializer='he_normal')(x)
+    x = BatchNormalization()(x)
+    x = MaxPooling2D()(x)
+    x = Dropout(drop_rate)(x)
+
+    x = Conv2D(256,(3,3),padding = "SAME",activation="relu",kernel_initializer='he_normal')(x)
+    x = Conv2D(256,(3,3),padding = "SAME",activation= "relu", kernel_initializer='he_normal')(x)
+    x = Conv2D(256,(3,3),padding = "SAME",activation= "relu", kernel_initializer='he_normal')(x)
+    x = BatchNormalization()(x)
+    x = MaxPooling2D()(x)
+    x = Dropout(drop_rate)(x)
+
+    x = Conv2D(512,(3,3),padding = "SAME",activation= "relu",kernel_initializer='he_normal')(x)
+    x = Conv2D(512,(3,3),padding = "SAME",activation= "relu",kernel_initializer='he_normal')(x)
+    x = Conv2D(512,(3,3),padding = "SAME",activation= "relu",kernel_initializer='he_normal')(x)
+    x = BatchNormalization()(x)
+    x = MaxPooling2D()(x)
+    x = Dropout(drop_rate)(x)
+    
+    x = Conv2D(1024,(3,3),padding = "SAME",activation= "relu",kernel_initializer='he_normal')(x)
+    x = Conv2D(1024,(3,3),padding = "SAME",activation= "relu",kernel_initializer='he_normal')(x)
+    x = Conv2D(1024,(3,3),padding = "SAME",activation= "relu",kernel_initializer='he_normal')(x)
+    x = BatchNormalization()(x)
+    x = GlobalAveragePooling2D()(x)
+
+    x = Dense(2048,activation = "relu")(x)
+    x = Dropout(drop_rate)(x)
+    x = Dense(1024,activation = "relu")(x)
+    x = Dropout(drop_rate)(x)
+    out  = Dense(10,activation = "softmax")(x)
+
+    return Model(inputs=inp, outputs=out)
+    
+
+
+# In[6]:
 
 
 def plot_acc_and_loss(history):
@@ -114,83 +207,106 @@ def plot_acc_and_loss(history):
     plt.show()
 
 
-# In[16]:
+# In[7]:
 
 
-def build_model():
-    # 使うモデルに置き換える。
-    drop_rate=0.3
-    inp = Input(shape = (32,32,3))
+def lr_schedule(epoch):
+    lr = 1e-3
+    if epoch > 100:
+        lr *= 0.2
+    elif epoch > 140:
+        lr *= 0.5
+    print('Learning rate: ', lr)
+    return lr
 
-    x = Conv2D(64,(3,3),padding='same',activation="relu", kernel_initializer='he_normal')(inp)
-    x = Conv2D(64,(3,3),padding='same',activation="relu", kernel_initializer='he_normal')(x)
-    x = Conv2D(64,(3,3),padding='same',activation="relu", kernel_initializer='he_normal')(x)
-    x = BatchNormalization()(x)
-    x = MaxPooling2D()(x)
-    x = Dropout(drop_rate)(x)
 
-    x = Conv2D(128,(3,3),padding='same',activation="relu", kernel_initializer='he_normal')(x)
-    x = Conv2D(128,(3,3),padding='same',activation="relu", kernel_initializer='he_normal')(x)
-    x = Conv2D(128,(3,3),padding='same',activation="relu", kernel_initializer='he_normal')(x)
-    x = BatchNormalization()(x)
-    x = MaxPooling2D()(x)
-    x = Dropout(drop_rate)(x)
+# In[ ]:
 
-    x = Conv2D(256,(3,3),padding='same',activation="relu",kernel_initializer='he_normal')(x)
-    x = Conv2D(256,(3,3),padding='same',activation="relu", kernel_initializer='he_normal')(x)
-    x = Conv2D(256,(3,3),padding='same',activation="relu", kernel_initializer='he_normal')(x)
-    x = BatchNormalization()(x)
-    x = MaxPooling2D()(x)
-    x = Dropout(drop_rate)(x)
 
-    x = Conv2D(512,(3,3),padding='same',activation="relu",kernel_initializer='he_normal')(x)
-    x = Conv2D(512,(3,3),padding='same',activation="relu",kernel_initializer='he_normal')(x)
-    x = Conv2D(512,(3,3),padding='same',activation="relu",kernel_initializer='he_normal')(x)
-    x = BatchNormalization()(x)
-    x = MaxPooling2D()(x)
-    x = Dropout(drop_rate)(x)
+# cv
+def run_cv(train, test, target, params={}):
+    N = 5
+    kf = StratifiedKFold(n_splits=N, random_state=SEED)
+    fold_splits = kf.split(train, target.argmax(axis=1))
+    tr_scores = []
+    val_scores = []
+    results = np.zeros((test.shape[0], N))
+    i = 0
     
-    x = Conv2D(1024,(3,3),padding="same",activation="relu",kernel_initializer='he_normal')(x)
-    x = Conv2D(1024,(3,3),padding='same',activation="relu",kernel_initializer='he_normal')(x)
-    x = Conv2D(1024,(3,3),padding='same',activation="relu",kernel_initializer='he_normal')(x)
-    x = BatchNormalization()(x)
-    x = GlobalAveragePooling2D()(x)
+    for tr_idx, val_idx in fold_splits:
+        print(f'Start fold {i}/{N}')
+        tr_X, val_X = train[tr_idx, :], train[val_idx, :]
+        tr_y, val_y = target[tr_idx, :], target[val_idx, :]
+        params['modelpath'] = f'/root/userspace/lesson2/second_submission_cv{i}_model.hdf5'
 
-    x = Dense(1024,activation="relu", kernel_initializer='he_normal')(x)
-    x = Dropout(drop_rate)(x)
-    x = Dense(516,activation="relu", kernel_initializer='he_normal')(x)
-    x = BatchNormalization()(x)
-    x = Dense(1024,activation="relu", kernel_initializer='he_normal')(x)
-    x = BatchNormalization()(x)
-    out  = Dense(10,activation="softmax")(x)
+        tr_acc, val_acc, test_pred = run_model(tr_X, tr_y, val_X, val_y, test, params)
+        tr_scores.append(tr_acc)
+        val_scores.append(val_acc)
+        results[:, i-1] = test_pred
+        i+=1
+        
+    print('mean acc: ', sum(val_scores)/len(val_scores))
+    return results
 
-    return Model(inputs=inp, outputs=out)
+# モデル予測実行
+def run_model(tr_X, tr_y, val_X, val_y, test, params, gen_func=None):
+    print('Train model')
+    batch_size=params['batch_size']
+    epochs = params['epochs']
+    modelpath = params['modelpath']
+
+    model = build_model()
+    model.compile(loss='categorical_crossentropy', optimizer=Adam(), metrics=['accuracy'])
+    
+    callbacks = [
+        EarlyStopping(monitor='val_acc', patience=20),
+        ReduceLROnPlateau(monitor='val_acc', factor=0.2, patience=10),
+        ModelCheckpoint(filepath=modelpath, monitor='val_acc', save_best_only=True)
+    ]
+    model.fit_generator(my_generator(tr_X, tr_y, batch_size),
+                        steps_per_epoch=len(tr_X)//batch_size,
+                        epochs=epochs,
+                        validation_data=my_generator(val_X, val_y, batch_size),
+                        validation_steps=len(val_X)//batch_size,
+                        callbacks=callbacks,
+                        verbose=2)
+    print('Pred 1/2')
+    tr_loss, tr_acc = model.evaluate(tr_X, tr_y)
+    val_loss, val_acc = model.evaluate(val_X, val_y)
+    print(f'[Train] acc:{tr_acc}  loss:{tr_loss}')
+    print(f'[Val]   acc:{val_acc} loss:{val_loss}')
+    print('Pred 2/2')
+    #pred_test = np.argmax(model.predict(test), axis=1)
+
+    # try tta
+    tta_epochs = 50
+    pred_test = np.argmax(tta(model, x_test.shape[0], tta_generator(x_test, batch_size=1000), batch_size=1000, epochs=tta_epochs), axis=1)
+    return tr_acc, val_acc, pred_test
+
+params = {'batch_size':1000,
+          'epochs':1000,}
+results = run_cv(x_train, x_test, y_train, params)
 
 
-# In[17]:
+# In[8]:
 
 
-get_ipython().run_cell_magic('time', '', "model = build_model()\nmodel.compile(loss='categorical_crossentropy', optimizer=Adam(), metrics=['accuracy'])\n\nX_trn, X_val, y_trn, y_val = train_test_split(x_train, y_train, random_state=SEED, stratify=y_train)\nbatch_size = 800\nepochs = 1000\nsteps_per_epoch = X_trn.shape[0] // batch_size\nvalidation_steps = X_val.shape[0] // batch_size\ncallbacks = [EarlyStopping(patience=30),\n             ReduceLROnPlateau(patience=15, factor=0.2),\n             #LearningRateScheduler(lr_schedule),\n             ModelCheckpoint(filepath='/root/userspace/lesson2/expmodel_1.hdf5', monitor='val_acc', save_best_only=True)\n            ]\n\nval_gen = ImageDataGenerator().flow(X_val, y_val, batch_size)\nhistory = model.fit_generator(my_generator(X_trn, y_trn, batch_size),\n                    steps_per_epoch=len(X_trn)//batch_size,\n                    epochs=epochs,\n                    validation_data=val_gen,\n                    validation_steps=len(X_val)//batch_size,\n                    callbacks=callbacks,\n                    verbose=2)\n#model.fit(x=x_train, y=y_train, batch_size=700, epochs=150, validation_split=0.1)\n\ny_pred = model.predict(x_test)\ny_pred = np.argmax(y_pred, 1)\nsubmission = pd.Series(y_pred, name='label')\nsubmission.to_csv('/root/userspace/exp_submission.csv', header=True, index_label='id')")
+model = load_model('/root/userspace/lesson2/second_submission_cv1_model.hdf5')
+# try tta
+tta_epochs = 50
+y_pred = np.argmax(tta(model, x_test.shape[0], tta_generator(x_test, batch_size=1000), batch_size=1000, epochs=tta_epochs), axis=1)
 
 
-# In[18]:
+# In[9]:
 
 
-plot_acc_and_loss(history)
+submission = pd.DataFrame(results, dtype=int)
+submission = submission.apply(lambda x: np.argmax(x.value_counts()), axis=1)
+submission.head(20)
 
 
-# In[19]:
+# In[ ]:
 
 
-get_ipython().run_cell_magic('time', '', '# try tta\ntta_epochs = 50\ntta_pred = tta(model, x_test.shape[0], tta_generator(x_test, batch_size=1000), batch_size=1000, epochs=tta_epochs)\nprint(tta_pred.shape)\nprint(tta_pred)')
-
-
-# In[20]:
-
-
-tta_pred = np.argmax(tta_pred, axis=1)
-submission = pd.Series(tta_pred, name='label')
-submission.to_csv('/root/userspace/exptta_submission.csv', header=True, index_label='id') 
-
-
-
+submission = pd.Series(y_pred, name='label')
+submission.to_csv('/root/userspace/last_submission.csv', header=True, index_label='id')
